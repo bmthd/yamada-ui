@@ -3,9 +3,9 @@ import type { Config } from "../../index.type"
 import type { ChangeMap, DependencyMap } from "../diff/get-diff"
 import type { RegistryMap } from "../diff/get-registries-and-files"
 import { merge } from "@yamada-ui/utils"
-import { execa, ExecaError } from "execa"
-import { mkdtemp } from "fs/promises"
+import { mkdtemp, readFile } from "fs/promises"
 import { Listr } from "listr2"
+import * as diff3 from "node-diff3"
 import { tmpdir } from "os"
 import path from "path"
 import c from "picocolors"
@@ -27,33 +27,27 @@ async function mergeContent(
   currentPath: string,
   fallback: string,
 ) {
-  let content = ""
-  let conflict = false
+  const [remote, locale, current] = await Promise.all([
+    readFile(remotePath, "utf8"),
+    readFile(localePath, "utf8"),
+    readFile(currentPath, "utf8"),
+  ])
 
-  try {
-    const { stdout } = await execa("diff3", [
-      "-m",
-      remotePath,
-      localePath,
-      currentPath,
-    ])
+  const result = diff3.merge(
+    current.split("\n"),
+    locale.split("\n"),
+    remote.split("\n"),
+  )
 
-    content = stdout
-  } catch (e) {
-    if (e instanceof ExecaError) {
-      if (e.stdout as string | undefined) {
-        conflict = true
-        content = e.stdout as unknown as string
-      } else {
-        content = fallback
-      }
-    }
-  }
+  let content = result.result.join("\n")
+  let conflict = result.conflict
 
   content = content.replaceAll(remotePath, "remote")
   content = content.replaceAll(localePath, "locale")
   content = content.replaceAll(currentPath, "current")
   content = content.replace(/\|\|\|\|\|\|\|[\s\S]*?=======/g, "=======")
+
+  if (!content) content = fallback
 
   return { conflict, content }
 }
